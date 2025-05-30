@@ -1,4 +1,5 @@
-Frozen Tag (API 9 – Ballistica Engine)
+# ba_meta require api 9
+# ba_meta export game
 
 """BombSquad / Ballistica custom game-mode.
 
