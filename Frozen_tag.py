@@ -1,164 +1,82 @@
-# frozen_tag_with_bots.py
-# BombSquad plugin: Frozen Tag with Bots (Two teams of runners, bots freeze players)
-# Players can't punch (punch disabled)
+Frozen Tag (API 9 – Ballistica Engine)
 
-import bs
-import random
+"""BombSquad / Ballistica custom game-mode.
 
-class FrozenTagGame(bs.TeamGameActivity):
-    @classmethod
-    def get_name(cls):
-        return "Frozen Tag with Bots"
+• Bots are the "Freezers": they chase and freeze any player they touch. • Two human teams are the "Runners": they must avoid the bots and can rescue (un-freeze) their own frozen teammates by touching them. • Punching is disabled for all players. • A round timer can end the game; otherwise the last team with an unfrozen player wins.
 
-    @classmethod
-    def get_description(cls, session):
-        return "Bots freeze players by tagging. Players unfreeze teammates by touch."
+Drop this file in your mods folder, reload scripts (or restart the app), then pick Frozen Tag from the Custom tab. """
 
-    @classmethod
-    def get_supported_maps(cls, session):
-        return bs.getmaps("melee")
+from future import annotations
 
-    def __init__(self, settings):
-        super().__init__(settings)
-        self._bots = []
-        self._freeze_time = 9999  # Freeze duration effectively infinite until unfreeze
-        self._round_length = 60  # seconds
+from typing import List, Sequence, Dict
 
-    def on_begin(self):
-        super().on_begin()
-        self._spawn_bots()
-        self._update()
+import random import math
 
-        # Start round timer
-        self._timer = bs.Timer(self._round_length * 1000, self._on_round_end)
+import babase import bascenev1 as bs import bascenev1lib.bots as bs_bots
 
-    def _spawn_bots(self):
-        # Spawn 2 bots as freezers, with simple AI
-        for i in range(2):
-            bot = bs.Bot(
-                spawn_position=(random.uniform(-5, 5), 1, random.uniform(-5, 5)),
-                color=(0.2, 0.8, 1),  # Blueish color for bots
-                character="Spaz",
-                highlight=False,
-                name=f"FreezerBot {i+1}",
-            )
-            bot.connect_controls_to_player()
-            self._bots.append(bot)
+----------------------------------------------------------------------
 
-    def handlemessage(self, msg):
-        if isinstance(msg, bs.PlayerDiedMessage):
-            self._check_for_win()
+✅ Player & Team subclasses ------------------------------------------------
 
-        if isinstance(msg, bs.HitMessage):
-            self._handle_hit(msg)
+class Player(bs.Player["Team"]): """Our player class stores a frozen flag."""
 
-        if isinstance(msg, bs.PunchHitMessage):
-            # Block punch hits from players
-            # Ignore punches from players, allow from bots
-            if hasattr(msg.source, "player") and msg.source.player.is_human:
-                return True  # block punch damage
+frozen: bool = False
 
-        if isinstance(msg, bs.PickupMessage):
-            # No punching, but allow pickup if needed
-            pass
+class Team(bs.Team[Player]): """Our team class has no special data for now."""
 
-        if isinstance(msg, bs.PlayerSpawnMessage):
-            # Disable punching for players
-            player = msg.player
-            if player.exists():
-                player.actor.node.punch_callback = lambda *args, **kwargs: None
-                player.actor.node.punch_power = 0
-                player.actor.node.can_punch = False
-                player.actor.node.handlemessage("disable_punch", True)
+----------------------------------------------------------------------
 
-    def _handle_hit(self, msg: bs.HitMessage):
-        # Bots freeze runners on contact
-        # Only process if source is a bot and target is player
-        if not hasattr(msg.source, "player") and msg.source and msg.source.exists():
-            # Check if source is a bot in our freezer list
-            if msg.source in [b.actor.node for b in self._bots]:
-                # msg.hit_type might be "punch"
-                victim_node = msg.target
-                victim_player = None
-                # Find player of victim_node
-                for player in self.players:
-                    if player.exists() and player.actor and player.actor.node == victim_node:
-                        victim_player = player
-                        break
-                if victim_player is not None and not getattr(victim_player, "frozen", False):
-                    self._freeze_player(victim_player)
+✅ Main Activity -----------------------------------------------------------
 
-        # Allow unfreeze by player touch
-        if hasattr(msg.source, "player") and hasattr(msg.target, "player"):
-            source_player = msg.source.player
-            target_player = msg.target.player
-            if source_player is not None and target_player is not None:
-                if getattr(target_player, "frozen", False) and source_player.team == target_player.team:
-                    self._unfreeze_player(target_player)
+class FrozenTag(bs.TeamGameActivity[Player, Team]): """Frozen Tag – runners vs freezer-bots (API 9)."""
 
-    def _freeze_player(self, player):
-        player.frozen = True
-        node = player.actor.node
-        node.handlemessage(bs.DieMessage())  # temporarily kill and respawn frozen animation?
-        # Actually better to disable movement and actions
-        node.invincible = True
-        node.punch_power = 0
-        node.can_punch = False
-        node.move_up = 0
-        node.move_down = 0
-        node.move_left = 0
-        node.move_right = 0
-        node.velocity = (0, 0, 0)
-        node.handlemessage("freeze")
-        bs.screenmessage(f"{player.getname()} got frozen!", color=(0, 0.5, 1))
-        # Show some ice effect? Optional
+name = "Frozen Tag"
+description = (
+    "Avoid the freezer-bots; touch your frozen teammates to thaw them. "
+    "Last team with a mobile player wins!"
+)
 
-    def _unfreeze_player(self, player):
-        player.frozen = False
-        node = player.actor.node
-        node.invincible = False
-        node.punch_power = 1
-        node.can_punch = True
-        bs.screenmessage(f"{player.getname()} was unfrozen!", color=(0, 1, 0))
+# Activity settings that show up in the custom tab (seconds).
+available_settings = [
+    bs.IntSetting("Round Length", default=90, min_value=30, max_value=300, increment=15)
+]
 
-    def _check_for_win(self):
-        teams_alive = []
-        for team in self.teams:
-            if any(player.exists() and not getattr(player, "frozen", False) for player in team.players):
-                teams_alive.append(team)
-        if len(teams_alive) == 1:
-            bs.screenmessage(f"Team {teams_alive[0].get_team_name()} wins!")
-            self.end_game()
+# We are symmetric: any map that works for melee should be ok.
+@classmethod
+def get_supported_maps(cls, session: bs.Session) -> List[str]:
+    return bs.getmaps("melee")
 
-    def _on_round_end(self):
-        # Check teams with unfrozen players
-        teams_alive = []
-        for team in self.teams:
-            if any(player.exists() and not getattr(player, "frozen", False) for player in team.players):
-                teams_alive.append(team)
-        if len(teams_alive) == 1:
-            bs.screenmessage(f"Team {teams_alive[0].get_team_name()} wins by surviving!")
-        else:
-            bs.screenmessage("Round ended with no winner.")
-        self.end_game()
+# ------------------------------------------------------------------
+# ⚙️ Activity lifecycle -------------------------------------------
 
-    def _update(self):
-        # Periodically update bot AI to chase nearest runner
-        for bot in self._bots:
-            if bot.exists():
-                nearest_player = None
-                nearest_dist = 9999
-                bot_pos = bot.actor.node.position
-                for player in self.players:
-                    if player.exists() and not getattr(player, "frozen", False):
-                        p_pos = player.actor.node.position
-                        dist = ((bot_pos[0] - p_pos[0])**2 + (bot_pos[1] - p_pos[1])**2 + (bot_pos[2] - p_pos[2])**2)**0.5
-                        if dist < nearest_dist:
-                            nearest_dist = dist
-                            nearest_player = player
-                if nearest_player:
-                    bot.actor.node.move_towards(nearest_player.actor.node.position, 1.0)
-        bs.Timer(1000, self._update)
+def __init__(self, settings: dict):
+    super().__init__(settings)
+    self._round_length = float(settings["Round Length"])
+    self._bots: bs_bots.BotSet | None = None
+    self._update_timer: bs.Timer | None = None
 
-def bs_get():
-    return FrozenTagGame
+def on_begin(self) -> None:
+    super().on_begin()
+
+    # ▶️ Spawn freezer bots (1 per 4 players, min 1).
+    num_bots = max(1, math.ceil(len(self.players) / 4))
+    self._bots = bs_bots.BotSet()
+    for _ in range(num_bots):
+        # SoldierBot is fairly quick and will punch/tag runners.
+        self._bots.spawn_bot(bs_bots.SoldierBot, pos=self.map.get_spawn_point())
+
+    # Disable punching for all existing and future players.
+    for p in self.players:
+        if p.is_alive():
+            assert p.actor
+            p.actor.node.punch_pressed = False
+            p.actor.node.punch_power = 0.0
+
+    # Round end timer.
+    bs.timer(self._round_length, self._end_round)
+
+    # Frequent updater – check win conditions & give bots targets.
+    self._update_timer = bs.Timer(0.5, self._update, repeat=True)
+
+# ----------------------------------------------------------------
+
