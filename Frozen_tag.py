@@ -11,9 +11,11 @@ from future import annotations
 
 from typing import List, Sequence, Dict
 
-import random import math
-
-import babase import bascenev1 as bs import bascenev1lib.bots as bs_bots
+import random 
+import math
+import babase 
+import bascenev1 as bs 
+import bascenev1lib.bots as bs_bots
 
 ----------------------------------------------------------------------
 
