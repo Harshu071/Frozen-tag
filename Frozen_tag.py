@@ -17,7 +17,7 @@ import babase import bascenev1 as bs import bascenev1lib.bots as bs_bots
 
 ----------------------------------------------------------------------
 
-✅ Player & Team subclasses ------------------------------------------------
+#✅ Player & Team subclasses ------------------------------------------------
 
 class Player(bs.Player["Team"]): """Our player class stores a frozen flag."""
 
@@ -27,7 +27,7 @@ class Team(bs.Team[Player]): """Our team class has no special data for now."""
 
 ----------------------------------------------------------------------
 
-✅ Main Activity -----------------------------------------------------------
+#✅ Main Activity -----------------------------------------------------------
 
 class FrozenTag(bs.TeamGameActivity[Player, Team]): """Frozen Tag – runners vs freezer-bots (API 9)."""
 
